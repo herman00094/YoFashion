@@ -413,3 +413,86 @@ class WardrobeIn(BaseModel):
     @field_validator("items")
     @classmethod
     def _items(cls, v: list[WardrobeItem]) -> list[WardrobeItem]:
+        return v[:250]
+
+
+class PaletteIn(BaseModel):
+    name: str = Field(min_length=2, max_length=64)
+    colors: list[str] = Field(min_length=3, max_length=12)
+    mood: int = Field(default=128, ge=0, le=255)
+    active: bool = True
+
+    @field_validator("colors")
+    @classmethod
+    def _colors(cls, v: list[str]) -> list[str]:
+        out = []
+        for c in v:
+            out.append(normalize_hex(c))
+        return out
+
+
+class PaletteOut(BaseModel):
+    palette_id: str
+    name: str
+    colors: list[str]
+    mood: int
+    created_at: str
+    active: bool
+    suggested_text: str
+
+
+class RecommendIn(BaseModel):
+    occasion: str = Field(min_length=2, max_length=80)
+    weather: str = Field(default="mild", min_length=2, max_length=40)
+    minutes_available: int = Field(default=20, ge=5, le=240)
+    energy: int = Field(default=5, ge=1, le=10)
+    venue_vibe: str = Field(default="street", min_length=2, max_length=48)
+    accent: str | None = Field(default=None)
+    palette_id: str | None = Field(default=None)
+
+    @field_validator("accent")
+    @classmethod
+    def _accent(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        if len(v) > 48:
+            return v[:48]
+        return v
+
+
+class FloralSVGIn(BaseModel):
+    palette: list[str] = Field(min_length=3, max_length=12)
+    seed: str | None = None
+    size: int = Field(default=1024, ge=256, le=2048)
+    petals: int | None = Field(default=None, ge=3, le=42)
+    rings: int | None = Field(default=None, ge=2, le=18)
+
+    @field_validator("palette")
+    @classmethod
+    def _palette(cls, v: list[str]) -> list[str]:
+        return [normalize_hex(x) for x in v]
+
+
+class LookOut(BaseModel):
+    look_id: str
+    title: str
+    notes: str
+    outfit: dict
+    palette_id: str
+    floral_seed: str
+    created_at: str
+
+
+# -----------------------------
+# Rate limiting (simple + local)
+# -----------------------------
+
+
+class TokenBucket:
+    def __init__(self, rate_per_minute: int, burst: int | None = None):
+        self.rate_per_second = max(1.0, rate_per_minute / 60.0)
+        self.capacity = float(burst if burst is not None else max(10, int(rate_per_minute * 0.35)))
+        self.tokens = self.capacity
