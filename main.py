@@ -496,3 +496,86 @@ class TokenBucket:
         self.rate_per_second = max(1.0, rate_per_minute / 60.0)
         self.capacity = float(burst if burst is not None else max(10, int(rate_per_minute * 0.35)))
         self.tokens = self.capacity
+        self.updated = time.monotonic()
+        self.lock = threading.Lock()
+
+    def allow(self, cost: float = 1.0) -> bool:
+        now = time.monotonic()
+        with self.lock:
+            dt = now - self.updated
+            self.updated = now
+            self.tokens = min(self.capacity, self.tokens + dt * self.rate_per_second)
+            if self.tokens >= cost:
+                self.tokens -= cost
+                return True
+            return False
+
+
+class RateLimiter:
+    def __init__(self, rpm: int):
+        self.rpm = rpm
+        self._buckets: dict[str, TokenBucket] = {}
+        self._lock = threading.Lock()
+
+    def bucket_for(self, key: str) -> TokenBucket:
+        with self._lock:
+            b = self._buckets.get(key)
+            if b is None:
+                b = TokenBucket(self.rpm)
+                self._buckets[key] = b
+            return b
+
+
+def client_key(req: Request) -> str:
+    ip = req.client.host if req.client else "unknown"
+    ua = req.headers.get("user-agent", "na")
+    return stable_hash_hex("YoFashion.client", ip, ua)[:24]
+
+
+# -----------------------------
+# Domain: palettes + floral generator
+# -----------------------------
+
+
+@dataclass(frozen=True)
+class Palette:
+    palette_id: str
+    name: str
+    colors: list[str]
+    mood: int
+    created_at: str
+    active: bool
+
+    @property
+    def bg(self) -> str:
+        return self.colors[0]
+
+    @property
+    def accent(self) -> str:
+        return self.colors[-1]
+
+    @property
+    def mid(self) -> str:
+        return self.colors[len(self.colors) // 2]
+
+
+def palette_suggested_text(p: Palette) -> str:
+    return best_text_color(p.bg)
+
+
+def seeded_rng(seed: str) -> random.Random:
+    raw = stable_hash_bytes("YoFashion.rng", seed)
+    n = int.from_bytes(raw[:8], "big", signed=False)
+    return random.Random(n)
+
+
+def choose_palette(db: DB, palette_id: str | None, r: random.Random) -> Palette:
+    if palette_id:
+        row = db.one("SELECT * FROM palettes WHERE palette_id=?", (palette_id,))
+        if row is None:
+            raise HTTPException(404, "Unknown palette_id")
+        return Palette(
+            palette_id=row["palette_id"],
+            name=row["name"],
+            colors=json.loads(row["colors_json"]),
+            mood=int(row["mood"]),
