@@ -330,3 +330,86 @@ def migrate(db: DB) -> None:
         """
     )
     c.commit()
+
+    row = db.one("SELECT v FROM meta WHERE k='schema_version'")
+    if row is None:
+        db.exec("INSERT INTO meta(k,v) VALUES('schema_version', '1')")
+
+
+# -----------------------------
+# Models
+# -----------------------------
+
+
+class SessionStartIn(BaseModel):
+    user_label: str = Field(min_length=1, max_length=64)
+    locale: str = Field(default="en-US", min_length=2, max_length=32)
+    tz: str = Field(default="UTC", min_length=3, max_length=48)
+
+    @field_validator("user_label")
+    @classmethod
+    def _clean_label(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Empty user_label")
+        return v[:64]
+
+
+class SessionOut(BaseModel):
+    session_id: str
+    created_at: str
+    user_label: str
+    locale: str
+    tz: str
+    last_seen: str
+
+
+class ProfileIn(BaseModel):
+    height_cm: int = Field(ge=120, le=230)
+    style_vibe: str = Field(min_length=2, max_length=64)
+    skin_tone: str = Field(min_length=2, max_length=48)
+    activity_level: str = Field(min_length=2, max_length=32)
+    allergies: list[str] = Field(default_factory=list)
+    goals: list[str] = Field(default_factory=list)
+
+    @field_validator("allergies", "goals")
+    @classmethod
+    def _cap_list(cls, v: list[str]) -> list[str]:
+        out = []
+        for x in v[:24]:
+            x = x.strip()
+            if x:
+                out.append(x[:64])
+        return out
+
+
+class WardrobeItem(BaseModel):
+    kind: str = Field(min_length=2, max_length=32)
+    label: str = Field(min_length=1, max_length=80)
+    color: str = Field(default="#222222")
+    warmth: int = Field(default=0, ge=-2, le=3)  # -2 very light, 3 very warm
+    formality: int = Field(default=0, ge=-2, le=3)
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("color")
+    @classmethod
+    def _color(cls, v: str) -> str:
+        return normalize_hex(v)
+
+    @field_validator("tags")
+    @classmethod
+    def _tags(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        for t_ in v[:16]:
+            t_ = t_.strip()
+            if t_:
+                out.append(t_[:32])
+        return out
+
+
+class WardrobeIn(BaseModel):
+    items: list[WardrobeItem] = Field(default_factory=list)
+
+    @field_validator("items")
+    @classmethod
+    def _items(cls, v: list[WardrobeItem]) -> list[WardrobeItem]:
