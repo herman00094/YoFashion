@@ -81,3 +81,86 @@ def safe_int(x: t.Any, default: int = 0) -> int:
 
 
 def stable_hash_bytes(*parts: t.Any) -> bytes:
+    h = hashlib.blake2b(digest_size=32)
+    for p in parts:
+        if isinstance(p, bytes):
+            h.update(p)
+        elif isinstance(p, str):
+            h.update(p.encode("utf-8"))
+        else:
+            h.update(json.dumps(p, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        h.update(b"\x1f")
+    return h.digest()
+
+
+def stable_hash_hex(*parts: t.Any) -> str:
+    return stable_hash_bytes(*parts).hex()
+
+
+def b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+def unb64(text: str) -> bytes:
+    return base64.b64decode(text.encode("ascii"), validate=True)
+
+
+def pick(seq: list[str], r: random.Random) -> str:
+    return seq[r.randrange(0, len(seq))]
+
+
+def soft_uuid(seed: str) -> str:
+    # Generates a stable UUID for repeatable seeds; not suitable for security.
+    d = stable_hash_bytes("YoFashion.soft_uuid", seed)
+    return str(uuid.UUID(bytes=d[:16], version=4))
+
+
+def redact(s: str, keep: int = 4) -> str:
+    if len(s) <= keep * 2:
+        return "*" * len(s)
+    return s[:keep] + "*" * (len(s) - keep * 2) + s[-keep:]
+
+
+HEX_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def is_hex_color(c: str) -> bool:
+    return bool(HEX_COLOR_RE.match(c))
+
+
+def normalize_hex(c: str) -> str:
+    c = c.strip()
+    if not is_hex_color(c):
+        raise ValueError(f"Not a hex color: {c}")
+    return "#" + c[1:].lower()
+
+
+def hex_to_rgb(c: str) -> tuple[int, int, int]:
+    c = normalize_hex(c)
+    return int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+
+
+def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    r, g, b = rgb
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def lerp(a: float, b: float, t_: float) -> float:
+    return a + (b - a) * t_
+
+
+def blend(c1: str, c2: str, t_: float) -> str:
+    r1, g1, b1 = hex_to_rgb(c1)
+    r2, g2, b2 = hex_to_rgb(c2)
+    return rgb_to_hex(
+        (
+            int(round(lerp(r1, r2, t_))),
+            int(round(lerp(g1, g2, t_))),
+            int(round(lerp(b1, b2, t_))),
+        )
+    )
+
+
+def relative_luminance(c: str) -> float:
+    # WCAG luminance
+    def f(u: float) -> float:
