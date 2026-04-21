@@ -164,3 +164,86 @@ def blend(c1: str, c2: str, t_: float) -> str:
 def relative_luminance(c: str) -> float:
     # WCAG luminance
     def f(u: float) -> float:
+        u = u / 255.0
+        return u / 12.92 if u <= 0.04045 else ((u + 0.055) / 1.055) ** 2.4
+
+    r, g, b = hex_to_rgb(c)
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+
+
+def contrast_ratio(a: str, b: str) -> float:
+    la = relative_luminance(a)
+    lb = relative_luminance(b)
+    l1, l2 = (la, lb) if la >= lb else (lb, la)
+    return (l1 + 0.05) / (l2 + 0.05)
+
+
+def best_text_color(bg: str) -> str:
+    # Choose between near-black and near-white.
+    dark = "#0b0d11"
+    light = "#f7f8fb"
+    return light if contrast_ratio(bg, light) >= contrast_ratio(bg, dark) else dark
+
+
+# -----------------------------
+# Config
+# -----------------------------
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    host: str
+    port: int
+    db_path: str
+    data_dir: str
+    static_dir: str
+    secret_key: str
+    allow_origins: list[str]
+    request_budget_per_minute: int
+
+
+def load_config() -> AppConfig:
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(base_dir, ".data")
+    static_dir = os.path.join(base_dir, "..", "streetofasha")
+    os.makedirs(data_dir, exist_ok=True)
+    secret_key = os.environ.get("YOFASHION_SECRET") or secrets.token_hex(32)
+
+    allow = os.environ.get("YOFASHION_CORS", "http://127.0.0.1:8899,http://localhost:8899").split(",")
+    allow_origins = [a.strip() for a in allow if a.strip()]
+
+    return AppConfig(
+        host=os.environ.get("YOFASHION_HOST", "127.0.0.1"),
+        port=safe_int(os.environ.get("YOFASHION_PORT", "8899"), 8899),
+        db_path=os.environ.get("YOFASHION_DB", os.path.join(data_dir, "yofashion.sqlite3")),
+        data_dir=data_dir,
+        static_dir=static_dir,
+        secret_key=secret_key,
+        allow_origins=allow_origins,
+        request_budget_per_minute=safe_int(os.environ.get("YOFASHION_RPM", "240"), 240),
+    )
+
+
+# -----------------------------
+# Database
+# -----------------------------
+
+
+class DB:
+    def __init__(self, path: str):
+        self.path = path
+        self._local = threading.local()
+
+    def conn(self) -> sqlite3.Connection:
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            c = sqlite3.connect(self.path, check_same_thread=False)
+            c.row_factory = sqlite3.Row
+            c.execute("PRAGMA journal_mode=WAL;")
+            c.execute("PRAGMA foreign_keys=ON;")
+            setattr(self._local, "conn", c)
+        return c
+
+    def close(self) -> None:
+        c = getattr(self._local, "conn", None)
+        if c is not None:
