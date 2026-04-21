@@ -579,3 +579,86 @@ def choose_palette(db: DB, palette_id: str | None, r: random.Random) -> Palette:
             name=row["name"],
             colors=json.loads(row["colors_json"]),
             mood=int(row["mood"]),
+            created_at=row["created_at"],
+            active=bool(row["active"]),
+        )
+    rows = db.all("SELECT * FROM palettes WHERE active=1 ORDER BY created_at DESC")
+    if not rows:
+        rows = db.all("SELECT * FROM palettes ORDER BY created_at DESC")
+    if not rows:
+        raise HTTPException(500, "No palettes available")
+    row = rows[r.randrange(0, len(rows))]
+    return Palette(
+        palette_id=row["palette_id"],
+        name=row["name"],
+        colors=json.loads(row["colors_json"]),
+        mood=int(row["mood"]),
+        created_at=row["created_at"],
+        active=bool(row["active"]),
+    )
+
+
+def _polar(cx: float, cy: float, r: float, deg: float) -> tuple[float, float]:
+    a = math.radians(deg)
+    return cx + r * math.cos(a), cy + r * math.sin(a)
+
+
+def floral_svg(palette: list[str], seed: str, size: int = 1024, petals: int | None = None, rings: int | None = None) -> str:
+    palette = [normalize_hex(c) for c in palette]
+    r = seeded_rng(seed)
+    s = float(size)
+    cx = s / 2.0
+    cy = s / 2.0
+
+    bg = palette[0]
+    mid = palette[len(palette) // 2]
+    accent = palette[-1]
+
+    petals_n = petals if petals is not None else (6 + r.randrange(0, 18))
+    rings_n = rings if rings is not None else (3 + r.randrange(0, 12))
+    petals_n = int(clamp(petals_n, 3, 42))
+    rings_n = int(clamp(rings_n, 2, 18))
+
+    tilt = r.random() * 360.0
+    base_radius = s * (0.28 + r.random() * 0.18)
+    petal_len = s * (0.28 + r.random() * 0.22)
+    bend = s * (0.05 + r.random() * 0.07)
+
+    def fmt(x: float) -> str:
+        return f"{x:.3f}".rstrip("0").rstrip(".")
+
+    # Background gradient and subtle grain dots.
+    grain_n = 18 + r.randrange(0, 92)
+    grain = []
+    for i in range(grain_n):
+        gx = r.random() * s
+        gy = r.random() * s
+        gr = 0.7 + r.random() * 2.2
+        go = 0.07 + r.random() * 0.09
+        grain.append(
+            f"<circle cx='{fmt(gx)}' cy='{fmt(gy)}' r='{fmt(gr)}' fill='#ffffff' opacity='{fmt(go)}'/>"
+        )
+
+    # Ring circles.
+    rings_svg = []
+    for i in range(rings_n):
+        rr = (i + 1) / rings_n
+        rad = s * (0.07 + rr * 0.38)
+        col = palette[i % len(palette)]
+        w = 1.0 + (i % 3) * 0.9
+        op = 0.10 + (i / (rings_n + 3)) * 0.42
+        rings_svg.append(
+            f"<circle cx='{fmt(cx)}' cy='{fmt(cy)}' r='{fmt(rad)}' fill='none' stroke='{col}' stroke-width='{fmt(w)}' opacity='{fmt(op)}'/>"
+        )
+
+    # Petal path for one petal.
+    top = _polar(cx, cy, base_radius + petal_len, tilt)
+    left = _polar(cx, cy, base_radius + petal_len * 0.55, tilt - 26.0)
+    right = _polar(cx, cy, base_radius + petal_len * 0.55, tilt + 26.0)
+    inner = _polar(cx, cy, base_radius * 0.55, tilt)
+
+    c1 = (left[0] + bend, left[1] - bend)
+    c2 = (right[0] - bend, right[1] - bend)
+
+    petal_d = (
+        f"M {fmt(inner[0])} {fmt(inner[1])} "
