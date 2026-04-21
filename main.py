@@ -247,3 +247,86 @@ class DB:
     def close(self) -> None:
         c = getattr(self._local, "conn", None)
         if c is not None:
+            try:
+                c.close()
+            finally:
+                setattr(self._local, "conn", None)
+
+    def exec(self, sql: str, params: tuple = ()) -> None:
+        c = self.conn()
+        c.execute(sql, params)
+        c.commit()
+
+    def one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
+        cur = self.conn().execute(sql, params)
+        row = cur.fetchone()
+        return row
+
+    def all(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
+        cur = self.conn().execute(sql, params)
+        return list(cur.fetchall())
+
+    def tx(self):
+        c = self.conn()
+        return c
+
+
+def migrate(db: DB) -> None:
+    c = db.conn()
+    c.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS meta(
+          k TEXT PRIMARY KEY,
+          v TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sessions(
+          session_id TEXT PRIMARY KEY,
+          created_at TEXT NOT NULL,
+          user_label TEXT NOT NULL,
+          locale TEXT NOT NULL,
+          tz TEXT NOT NULL,
+          last_seen TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS profiles(
+          session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+          height_cm INTEGER NOT NULL,
+          style_vibe TEXT NOT NULL,
+          skin_tone TEXT NOT NULL,
+          activity_level TEXT NOT NULL,
+          allergies TEXT NOT NULL,
+          goals TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS wardrobes(
+          session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+          items_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS palettes(
+          palette_id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          colors_json TEXT NOT NULL,
+          mood INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          active INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS looks(
+          look_id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          notes TEXT NOT NULL,
+          outfit_json TEXT NOT NULL,
+          palette_id TEXT NOT NULL REFERENCES palettes(palette_id) ON DELETE RESTRICT,
+          floral_seed TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_looks_session_created ON looks(session_id, created_at);
+        """
+    )
+    c.commit()
