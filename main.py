@@ -662,3 +662,86 @@ def floral_svg(palette: list[str], seed: str, size: int = 1024, petals: int | No
 
     petal_d = (
         f"M {fmt(inner[0])} {fmt(inner[1])} "
+        f"C {fmt(c1[0])} {fmt(c1[1])} {fmt(left[0])} {fmt(left[1])} {fmt(top[0])} {fmt(top[1])} "
+        f"C {fmt(right[0])} {fmt(right[1])} {fmt(c2[0])} {fmt(c2[1])} {fmt(inner[0])} {fmt(inner[1])} Z"
+    )
+
+    # Replicate petals by rotation.
+    petal_svg = []
+    for i in range(petals_n):
+        ang = tilt + i * (360.0 / petals_n)
+        fill = blend(accent, mid, (i % 7) / 7.0)
+        op = 0.14 + (r.random() * 0.22)
+        petal_svg.append(
+            f"<g transform='rotate({fmt(ang)} {fmt(cx)} {fmt(cy)})'>"
+            f"<path d='{petal_d}' fill='{fill}' opacity='{fmt(op)}'/>"
+            f"<path d='{petal_d}' fill='none' stroke='{mid}' stroke-width='{fmt(1.6)}' opacity='{fmt(0.35)}'/>"
+            f"</g>"
+        )
+
+    # Title stamp.
+    stamp = (
+        f"<g font-family='ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto' fill='{mid}' opacity='0.86'>"
+        f"<text x='{fmt(s*0.05)}' y='{fmt(s*0.09)}' font-size='{fmt(s*0.035)}'>YoFashion</text>"
+        f"<text x='{fmt(s*0.05)}' y='{fmt(s*0.125)}' font-size='{fmt(s*0.018)}'>seed {seed[:10]}</text>"
+        f"</g>"
+    )
+
+    svg = (
+        f"<svg xmlns='http://www.w3.org/2000/svg' width='{size}' height='{size}' viewBox='0 0 {size} {size}'>"
+        f"<defs>"
+        f"<radialGradient id='bg' cx='50%' cy='42%' r='75%'>"
+        f"<stop offset='0%' stop-color='{mid}' stop-opacity='0.92'/>"
+        f"<stop offset='70%' stop-color='{bg}' stop-opacity='0.98'/>"
+        f"<stop offset='100%' stop-color='{accent}' stop-opacity='1'/>"
+        f"</radialGradient>"
+        f"<filter id='blur' x='-20%' y='-20%' width='140%' height='140%'>"
+        f"<feGaussianBlur stdDeviation='{fmt(s*0.0045)}'/>"
+        f"</filter>"
+        f"</defs>"
+        f"<rect width='{size}' height='{size}' fill='url(#bg)'/>"
+        f"<g opacity='0.95' filter='url(#blur)'>"
+        + "".join(rings_svg)
+        + "</g>"
+        f"<g opacity='0.96'>"
+        + "".join(petal_svg)
+        + "</g>"
+        f"<g opacity='0.9'>"
+        + "".join(grain)
+        + "</g>"
+        + stamp
+        + "</svg>"
+    )
+    return svg
+
+
+# -----------------------------
+# Domain: health + style planning
+# -----------------------------
+
+
+VIBES = [
+    "street",
+    "minimal",
+    "artsy",
+    "sport-luxe",
+    "soft-tailored",
+    "techwear",
+    "vintage",
+    "clean-girl",
+    "night-bloom",
+    "garden-gym",
+]
+
+MOTIFS = ["rose", "iris", "dahlia", "jasmine", "hibiscus", "camellia", "lotus", "orchid", "peony"]
+
+ACCESSORIES = [
+    "thin silver chain",
+    "soft leather tote",
+    "structured mini bag",
+    "sport watch",
+    "oversized sunglasses",
+    "scarf tied to bag",
+    "minimal hoops",
+    "pearl stud set",
+    "canvas cap",
