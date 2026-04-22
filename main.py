@@ -1160,3 +1160,86 @@ def create_app(cfg: AppConfig) -> FastAPI:
             rows = db.all("SELECT * FROM palettes WHERE active=? ORDER BY created_at DESC", (1 if active else 0,))
         out: list[PaletteOut] = []
         for row in rows:
+            colors = json.loads(row["colors_json"])
+            p = Palette(
+                palette_id=row["palette_id"],
+                name=row["name"],
+                colors=colors,
+                mood=int(row["mood"]),
+                created_at=row["created_at"],
+                active=bool(row["active"]),
+            )
+            out.append(
+                PaletteOut(
+                    palette_id=p.palette_id,
+                    name=p.name,
+                    colors=p.colors,
+                    mood=p.mood,
+                    created_at=p.created_at,
+                    active=p.active,
+                    suggested_text=palette_suggested_text(p),
+                )
+            )
+        return out
+
+    @app.post("/api/floral/svg")
+    async def floral_svg_api(inp: FloralSVGIn):
+        seed = inp.seed or stable_hash_hex("YoFashion.svg", iso_utc(), secrets.token_hex(8))
+        svg = floral_svg(inp.palette, seed=seed, size=inp.size, petals=inp.petals, rings=inp.rings)
+        return {
+            "seed": seed,
+            "svg": svg,
+            "data_uri": "data:image/svg+xml;base64," + b64(svg.encode("utf-8")),
+        }
+
+    @app.post("/api/recommend")
+    async def recommend(inp: RecommendIn, request: Request, sess=Depends(require_session)):
+        # Get profile + wardrobe if present.
+        prof = db.one("SELECT * FROM profiles WHERE session_id=?", (sess["session_id"],))
+        ward = db.one("SELECT items_json FROM wardrobes WHERE session_id=?", (sess["session_id"],))
+
+        profile = None
+        if prof is not None:
+            profile = dict(prof)
+            profile["allergies"] = json.loads(profile["allergies"])
+            profile["goals"] = json.loads(profile["goals"])
+
+        items: list[WardrobeItem] = []
+        if ward is not None:
+            for it in json.loads(ward["items_json"]):
+                try:
+                    items.append(WardrobeItem(**it))
+                except Exception:
+                    continue
+
+        # Seed randomness per request.
+        seed = stable_hash_hex(
+            "YoFashion.recommend",
+            sess["session_id"],
+            inp.occasion,
+            inp.weather,
+            inp.venue_vibe,
+            inp.minutes_available,
+            inp.energy,
+            inp.accent,
+            inp.palette_id,
+            iso_utc(),
+        )
+        r = seeded_rng(seed)
+
+        vibe = inp.venue_vibe.strip().lower()
+        if vibe not in VIBES:
+            vibe = pick(VIBES, r)
+
+        motif = pick(MOTIFS, r)
+        accessory = pick(ACCESSORIES, r)
+        fragrance = pick(FRAGRANCE_NOTES, r)
+        mantra = pick(MANTRAS, r)
+
+        p = choose_palette(db, inp.palette_id, r)
+        if not p.active:
+            # Still allow but warn client.
+            pass
+
+        outfit = choose_outfit(items, inp.weather, inp.venue_vibe, vibe, r)
+        micro = health_micro_plan(inp.minutes_available, inp.energy, r)
