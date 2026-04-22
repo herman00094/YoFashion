@@ -745,3 +745,86 @@ ACCESSORIES = [
     "minimal hoops",
     "pearl stud set",
     "canvas cap",
+]
+
+FRAGRANCE_NOTES = [
+    "neroli + cedar",
+    "rosewater + musk",
+    "bergamot + vetiver",
+    "jasmine tea + amber",
+    "iris + clean linen",
+    "salted citrus + sage",
+    "fig leaf + sandalwood",
+]
+
+MANTRAS = [
+    "Breathe deep, dress bright, move kindly today.",
+    "Soft petals, strong steps, steady heart, go.",
+    "Nourish first, sparkle second, then bloom louder.",
+    "Small rituals, big glow, let it happen.",
+    "Warm core, calm mind, crisp fit, onward.",
+    "Walk steady, sip water, bloom in silence.",
+]
+
+
+def wardrobe_summary(items: list[WardrobeItem]) -> dict[str, int]:
+    kinds: dict[str, int] = {}
+    for it in items:
+        k = it.kind.lower()
+        kinds[k] = kinds.get(k, 0) + 1
+    return dict(sorted(kinds.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _score_item(it: WardrobeItem, weather: str, venue: str, vibe: str) -> float:
+    s = 0.0
+    w = weather.lower()
+    if "cold" in w:
+        s += it.warmth * 0.9
+    elif "hot" in w:
+        s -= it.warmth * 0.7
+    elif "rain" in w:
+        if any(t_ in it.tags for t_ in ["waterproof", "shell", "boots"]):
+            s += 1.5
+    if venue.lower() in it.tags:
+        s += 1.25
+    if vibe.lower() in it.tags:
+        s += 0.9
+    if it.formality > 1 and "street" in venue.lower():
+        s -= 0.35
+    return s
+
+
+def choose_outfit(items: list[WardrobeItem], weather: str, venue: str, vibe: str, r: random.Random) -> dict:
+    if not items:
+        # fallback "virtual capsule"
+        capsule = [
+            WardrobeItem(kind="top", label="ribbed tee", color="#111111", tags=["street", "minimal"]),
+            WardrobeItem(kind="bottom", label="straight-leg denim", color="#1c2b3a", tags=["street", "vintage"]),
+            WardrobeItem(kind="outer", label="light bomber", color="#2b2f36", warmth=1, tags=["street", "techwear"]),
+            WardrobeItem(kind="shoes", label="clean sneakers", color="#f0f2f5", tags=["street", "sport-luxe"]),
+        ]
+        items = capsule
+
+    by_kind: dict[str, list[WardrobeItem]] = {}
+    for it in items:
+        by_kind.setdefault(it.kind.lower(), []).append(it)
+
+    def pick_best(kind: str, want: int = 1) -> list[WardrobeItem]:
+        opts = by_kind.get(kind, [])
+        if not opts:
+            return []
+        scored = [(it, _score_item(it, weather, venue, vibe) + (r.random() * 0.12)) for it in opts]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [it for it, _ in scored[:want]]
+
+    outfit_items: list[WardrobeItem] = []
+    outfit_items += pick_best("top", 1)
+    outfit_items += pick_best("bottom", 1)
+    outfit_items += pick_best("outer", 1) if "cold" in weather.lower() or r.random() < 0.45 else []
+    outfit_items += pick_best("shoes", 1)
+
+    # if still sparse, add "accessory" placeholder using the palette.
+    return {
+        "items": [it.model_dump() for it in outfit_items],
+        "coverage": wardrobe_summary(outfit_items),
+    }
