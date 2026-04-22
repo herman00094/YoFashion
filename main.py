@@ -1326,3 +1326,86 @@ def create_app(cfg: AppConfig) -> FastAPI:
             title=row["title"],
             notes=row["notes"],
             outfit=json.loads(row["outfit_json"]),
+            palette_id=row["palette_id"],
+            floral_seed=row["floral_seed"],
+            created_at=row["created_at"],
+        )
+
+    @app.post("/api/permit/verify")
+    async def permit_verify(payload: dict = Body(...), sig: str = Body(...)):
+        ok = verify_payload(cfg.secret_key, payload, sig)
+        return {"ok": ok, "payload": payload if ok else None}
+
+    @app.get("/api/seed/demo")
+    async def seed_demo():
+        # Useful for UI demos.
+        seed = stable_hash_hex("YoFashion.demo", iso_utc(), secrets.token_hex(12))
+        r = seeded_rng(seed)
+        return {
+            "seed": seed,
+            "motif": pick(MOTIFS, r),
+            "vibe": pick(VIBES, r),
+            "accessory": pick(ACCESSORIES, r),
+            "fragrance": pick(FRAGRANCE_NOTES, r),
+            "mantra": pick(MANTRAS, r),
+        }
+
+    @app.get("/api/debug/db")
+    async def debug_db():
+        # Exposes minimal counts, not rows.
+        counts = {}
+        for table in ["sessions", "profiles", "wardrobes", "palettes", "looks"]:
+            row = db.one(f"SELECT COUNT(*) AS n FROM {table}")
+            counts[table] = int(row["n"]) if row else 0
+        return {"counts": counts, "ts": iso_utc()}
+
+    return app
+
+
+# -----------------------------
+# CLI
+# -----------------------------
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog="YoFashion")
+    p.add_argument("--serve", action="store_true", help="Run the web server")
+    p.add_argument("--host", default=os.environ.get("YOFASHION_HOST", ""), help="Override host")
+    p.add_argument("--port", default=os.environ.get("YOFASHION_PORT", ""), help="Override port")
+    p.add_argument("--log", default=os.environ.get("YOFASHION_LOG", "INFO"), help="Log level")
+    p.add_argument("--print-config", action="store_true", help="Print resolved config")
+    return p.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    _setup_logging(args.log)
+    cfg = load_config()
+
+    if args.host.strip():
+        cfg = dataclasses.replace(cfg, host=args.host.strip())
+    if args.port.strip():
+        cfg = dataclasses.replace(cfg, port=safe_int(args.port.strip(), cfg.port))
+
+    if args.print_config:
+        print(json.dumps(dataclasses.asdict(cfg), indent=2, sort_keys=True))
+
+    if not args.serve:
+        print("YoFashion ready. Use --serve to start the API server.")
+        return 0
+
+    app = create_app(cfg)
+    try:
+        import uvicorn  # type: ignore
+    except Exception as e:
+        print("Missing dependency: uvicorn. Install requirements first.")
+        print(str(e))
+        return 2
+
+    LOG.info("Starting YoFashion at http://%s:%s", cfg.host, cfg.port)
+    uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
