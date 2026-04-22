@@ -828,3 +828,86 @@ def choose_outfit(items: list[WardrobeItem], weather: str, venue: str, vibe: str
         "items": [it.model_dump() for it in outfit_items],
         "coverage": wardrobe_summary(outfit_items),
     }
+
+
+def health_micro_plan(minutes: int, energy: int, r: random.Random) -> dict:
+    minutes = int(clamp(minutes, 5, 240))
+    energy = int(clamp(energy, 1, 10))
+
+    hygiene = [
+        "Brush + floss (2 minutes).",
+        "Cold rinse on wrists (20 seconds).",
+        "Moisturize + SPF (90 seconds).",
+        "Lip balm + water sip (30 seconds).",
+    ]
+    movement_low = [
+        "Neck rolls + shoulder openers (3 minutes).",
+        "Slow walk, nasal breathing (8 minutes).",
+        "Hip circles + calf raises (4 minutes).",
+    ]
+    movement_mid = [
+        "Brisk walk with posture focus (10 minutes).",
+        "3 rounds: 10 squats + 10 wall pushups.",
+        "Stair intervals: 6 minutes total.",
+    ]
+    movement_high = [
+        "12-minute tempo walk/jog mix.",
+        "3 rounds: 12 lunges + 10 incline pushups + 20s plank.",
+        "Jump rope or shadow boxing (8 minutes).",
+    ]
+    nutrition = [
+        "Protein anchor: yogurt, eggs, tofu, or beans.",
+        "Hydration: 400–600ml water in the next hour.",
+        "Fiber: fruit + nuts or a small salad cup.",
+        "Salt check: add a pinch of electrolytes if needed.",
+    ]
+    focus = [
+        "Two deep breaths before you leave.",
+        "Put one task on 'later' deliberately.",
+        "Stand tall: ribs down, chin level.",
+        "Text someone one honest sentence.",
+    ]
+
+    plan = {"hygiene": [], "movement": [], "nutrition": [], "focus": []}
+    plan["hygiene"] = r.sample(hygiene, k=min(3, len(hygiene)))
+    if energy <= 3:
+        plan["movement"] = r.sample(movement_low, k=min(2, len(movement_low)))
+    elif energy <= 7:
+        plan["movement"] = r.sample(movement_mid, k=min(2, len(movement_mid)))
+    else:
+        plan["movement"] = r.sample(movement_high, k=min(2, len(movement_high)))
+    plan["nutrition"] = r.sample(nutrition, k=min(3, len(nutrition)))
+    plan["focus"] = r.sample(focus, k=min(2, len(focus)))
+
+    # time budgeting
+    base = 5 + (2 if energy >= 6 else 0)
+    plan["timebox"] = {
+        "minutes_available": minutes,
+        "suggested": {
+            "hygiene": min(6, max(3, base)),
+            "movement": min(20, max(6, int(minutes * (0.18 + energy * 0.02)))),
+            "nutrition": min(8, max(4, int(minutes * 0.12))),
+            "focus": min(4, max(2, int(minutes * 0.05))),
+        },
+    }
+    return plan
+
+
+def style_script(occasion: str, venue: str, vibe: str, motif: str, accessory: str, fragrance: str, mantra: str) -> str:
+    # Slightly poetic but actionable.
+    parts = [
+        f"Occasion: {occasion}. Venue vibe: {venue}.",
+        f"Theme: {vibe} with a {motif} motif.",
+        "Option A (subtle bloom): keep silhouette clean, put color in one detail.",
+        "Option B (bold bloom): commit to contrast, echo it with one accessory.",
+        f"Accessory: {accessory}.",
+        f"Fragrance note: {fragrance}.",
+        f"Mantra: {mantra}",
+    ]
+    return "\n".join(parts)
+
+
+# -----------------------------
+# Domain: signatures (local, for demo-quality "permits")
+# -----------------------------
+
