@@ -1243,3 +1243,86 @@ def create_app(cfg: AppConfig) -> FastAPI:
 
         outfit = choose_outfit(items, inp.weather, inp.venue_vibe, vibe, r)
         micro = health_micro_plan(inp.minutes_available, inp.energy, r)
+
+        # Generate floral preview.
+        svg_seed = stable_hash_hex("YoFashion.svg.seed", seed, p.palette_id, motif)
+        svg = floral_svg(p.colors, seed=svg_seed, size=768)
+
+        notes = style_script(inp.occasion, inp.venue_vibe, vibe, motif, accessory, fragrance, mantra)
+
+        # Persist as "look"
+        look_id = soft_uuid(stable_hash_hex("YoFashion.look", sess["session_id"], seed, secrets.token_hex(8)))[:22]
+        created = iso_utc()
+        title = f"{vibe.title()} • {motif.title()} • {p.name}"
+        outfit_json = json.dumps(outfit, separators=(",", ":"))
+        db.exec(
+            "INSERT INTO looks(look_id,session_id,title,notes,outfit_json,palette_id,floral_seed,created_at) VALUES(?,?,?,?,?,?,?,?)",
+            (look_id, sess["session_id"], title, notes, outfit_json, p.palette_id, svg_seed, created),
+        )
+
+        # Provide a local "permit-like" signature for UI integrity.
+        permit = {
+            "look_id": look_id,
+            "session_id": sess["session_id"],
+            "palette_id": p.palette_id,
+            "floral_seed": svg_seed,
+            "created_at": created,
+            "title": title,
+        }
+        sig = sign_payload(cfg.secret_key, permit)
+
+        return {
+            "seed": seed,
+            "look": {
+                "look_id": look_id,
+                "title": title,
+                "notes": notes,
+                "outfit": outfit,
+                "palette": dataclasses.asdict(p),
+                "floral": {
+                    "seed": svg_seed,
+                    "svg": svg,
+                    "data_uri": "data:image/svg+xml;base64," + b64(svg.encode("utf-8")),
+                },
+                "health_micro": micro,
+            },
+            "profile_present": prof is not None,
+            "wardrobe_items": len(items),
+            "permit": {"payload": permit, "sig": sig},
+        }
+
+    @app.get("/api/looks", response_model=list[LookOut])
+    async def looks_list(limit: int = 30, sess=Depends(require_session)):
+        limit = int(clamp(limit, 1, 120))
+        rows = db.all(
+            "SELECT look_id,title,notes,outfit_json,palette_id,floral_seed,created_at FROM looks WHERE session_id=? ORDER BY created_at DESC LIMIT ?",
+            (sess["session_id"], limit),
+        )
+        out: list[LookOut] = []
+        for row in rows:
+            out.append(
+                LookOut(
+                    look_id=row["look_id"],
+                    title=row["title"],
+                    notes=row["notes"],
+                    outfit=json.loads(row["outfit_json"]),
+                    palette_id=row["palette_id"],
+                    floral_seed=row["floral_seed"],
+                    created_at=row["created_at"],
+                )
+            )
+        return out
+
+    @app.get("/api/looks/{look_id}", response_model=LookOut)
+    async def look_get(look_id: str, sess=Depends(require_session)):
+        row = db.one(
+            "SELECT look_id,title,notes,outfit_json,palette_id,floral_seed,created_at FROM looks WHERE session_id=? AND look_id=?",
+            (sess["session_id"], look_id),
+        )
+        if row is None:
+            raise HTTPException(404, "look not found")
+        return LookOut(
+            look_id=row["look_id"],
+            title=row["title"],
+            notes=row["notes"],
+            outfit=json.loads(row["outfit_json"]),
