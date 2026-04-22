@@ -1077,3 +1077,86 @@ def create_app(cfg: AppConfig) -> FastAPI:
             VALUES(?,?,?,?,?,?,?,?)
             ON CONFLICT(session_id) DO UPDATE SET
               height_cm=excluded.height_cm,
+              style_vibe=excluded.style_vibe,
+              skin_tone=excluded.skin_tone,
+              activity_level=excluded.activity_level,
+              allergies=excluded.allergies,
+              goals=excluded.goals,
+              updated_at=excluded.updated_at
+            """,
+            (
+                sess["session_id"],
+                int(inp.height_cm),
+                inp.style_vibe,
+                inp.skin_tone,
+                inp.activity_level,
+                json.dumps(inp.allergies, separators=(",", ":")),
+                json.dumps(inp.goals, separators=(",", ":")),
+                now,
+            ),
+        )
+        return {"ok": True, "updated_at": now}
+
+    @app.get("/api/profile")
+    async def profile_get(sess=Depends(require_session)):
+        row = db.one("SELECT * FROM profiles WHERE session_id=?", (sess["session_id"],))
+        if row is None:
+            return {"exists": False}
+        d = dict(row)
+        d["exists"] = True
+        d["allergies"] = json.loads(d["allergies"])
+        d["goals"] = json.loads(d["goals"])
+        return d
+
+    @app.put("/api/wardrobe")
+    async def wardrobe_put(inp: WardrobeIn, sess=Depends(require_session)):
+        now = iso_utc()
+        payload = [it.model_dump() for it in inp.items]
+        db.exec(
+            """
+            INSERT INTO wardrobes(session_id,items_json,updated_at)
+            VALUES(?,?,?)
+            ON CONFLICT(session_id) DO UPDATE SET
+              items_json=excluded.items_json,
+              updated_at=excluded.updated_at
+            """,
+            (sess["session_id"], json.dumps(payload, separators=(",", ":")), now),
+        )
+        return {"ok": True, "count": len(payload), "updated_at": now}
+
+    @app.get("/api/wardrobe")
+    async def wardrobe_get(sess=Depends(require_session)):
+        row = db.one("SELECT items_json,updated_at FROM wardrobes WHERE session_id=?", (sess["session_id"],))
+        if row is None:
+            return {"items": [], "exists": False}
+        return {"items": json.loads(row["items_json"]), "exists": True, "updated_at": row["updated_at"]}
+
+    @app.post("/api/palettes", response_model=PaletteOut)
+    async def palette_create(inp: PaletteIn, sess=Depends(require_session)):
+        # session scoped create, but stored globally for simplicity.
+        created = iso_utc()
+        pid = soft_uuid(stable_hash_hex("YoFashion.palette", sess["session_id"], inp.name, created, secrets.token_hex(8)))[:18]
+        colors = [normalize_hex(c) for c in inp.colors]
+        db.exec(
+            "INSERT INTO palettes(palette_id,name,colors_json,mood,created_at,active) VALUES(?,?,?,?,?,?)",
+            (pid, inp.name, json.dumps(colors, separators=(",", ":")), int(inp.mood), created, 1 if inp.active else 0),
+        )
+        p = Palette(palette_id=pid, name=inp.name, colors=colors, mood=int(inp.mood), created_at=created, active=inp.active)
+        return PaletteOut(
+            palette_id=pid,
+            name=p.name,
+            colors=p.colors,
+            mood=p.mood,
+            created_at=p.created_at,
+            active=p.active,
+            suggested_text=palette_suggested_text(p),
+        )
+
+    @app.get("/api/palettes", response_model=list[PaletteOut])
+    async def palettes_list(active: bool | None = None):
+        if active is None:
+            rows = db.all("SELECT * FROM palettes ORDER BY created_at DESC")
+        else:
+            rows = db.all("SELECT * FROM palettes WHERE active=? ORDER BY created_at DESC", (1 if active else 0,))
+        out: list[PaletteOut] = []
+        for row in rows:
