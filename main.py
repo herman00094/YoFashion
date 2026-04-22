@@ -994,3 +994,86 @@ def create_app(cfg: AppConfig) -> FastAPI:
             raise HTTPException(401, "Missing session (set x-yofashion-session header)")
         row = db.one("SELECT * FROM sessions WHERE session_id=?", (sid,))
         if row is None:
+            raise HTTPException(401, "Unknown session")
+        db.exec("UPDATE sessions SET last_seen=? WHERE session_id=?", (iso_utc(), sid))
+        return row
+
+    @app.get("/", response_class=HTMLResponse)
+    async def home():
+        html = f"""
+        <html>
+          <head>
+            <meta charset="utf-8"/>
+            <meta name="viewport" content="width=device-width,initial-scale=1"/>
+            <title>YoFashion</title>
+            <style>
+              body {{ font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto; background: #0b1020; color: #f7efe6; margin: 0; padding: 40px; }}
+              .card {{ max-width: 920px; margin: 0 auto; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); border-radius: 16px; padding: 22px; }}
+              a {{ color: #1de9b6; }}
+              code {{ background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 8px; }}
+              .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }}
+              @media (max-width: 780px) {{ .grid {{ grid-template-columns: 1fr; }} }}
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <h1 style="margin-top: 0;">YoFashion</h1>
+              <p>Local-first health + style assistant with floral design endpoints.</p>
+              <div class="grid">
+                <div>
+                  <h3>Quickstart</h3>
+                  <ol>
+                    <li>Start a session via <code>POST /api/session/start</code></li>
+                    <li>Save a profile via <code>PUT /api/profile</code></li>
+                    <li>Ask for a plan via <code>POST /api/recommend</code></li>
+                  </ol>
+                </div>
+                <div>
+                  <h3>Street UI</h3>
+                  <p>If you created the <code>streetofasha</code> folder beside YoFashion, open:</p>
+                  <p><a href="/streetofasha/">/streetofasha/</a></p>
+                </div>
+              </div>
+              <p style="opacity: 0.8;">Docs: <a href="/docs">/docs</a></p>
+            </div>
+          </body>
+        </html>
+        """
+        return HTMLResponse(html)
+
+    @app.get("/api/health")
+    async def api_health():
+        return {
+            "ok": True,
+            "ts": iso_utc(),
+            "version": "1.0.0",
+            "db": os.path.basename(cfg.db_path),
+            "static": os.path.isdir(cfg.static_dir),
+        }
+
+    @app.post("/api/session/start", response_model=SessionOut)
+    async def session_start(inp: SessionStartIn):
+        created = iso_utc()
+        seed = stable_hash_hex("YoFashion.session", inp.user_label, created, secrets.token_hex(8))
+        sid = soft_uuid(seed)
+        db.exec(
+            "INSERT INTO sessions(session_id,created_at,user_label,locale,tz,last_seen) VALUES(?,?,?,?,?,?)",
+            (sid, created, inp.user_label, inp.locale, inp.tz, created),
+        )
+        row = db.one("SELECT * FROM sessions WHERE session_id=?", (sid,))
+        assert row is not None
+        return SessionOut(**dict(row))
+
+    @app.get("/api/session/me", response_model=SessionOut)
+    async def session_me(sess=Depends(require_session)):
+        return SessionOut(**dict(sess))
+
+    @app.put("/api/profile")
+    async def profile_put(inp: ProfileIn, sess=Depends(require_session)):
+        now = iso_utc()
+        db.exec(
+            """
+            INSERT INTO profiles(session_id,height_cm,style_vibe,skin_tone,activity_level,allergies,goals,updated_at)
+            VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(session_id) DO UPDATE SET
+              height_cm=excluded.height_cm,
