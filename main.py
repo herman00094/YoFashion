@@ -911,3 +911,86 @@ def style_script(occasion: str, venue: str, vibe: str, motif: str, accessory: st
 # Domain: signatures (local, for demo-quality "permits")
 # -----------------------------
 
+
+def sign_payload(secret_key: str, payload: dict) -> str:
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    mac = hmac.new(secret_key.encode("utf-8"), blob, hashlib.sha256).digest()
+    return b64(mac)
+
+
+def verify_payload(secret_key: str, payload: dict, signature: str) -> bool:
+    try:
+        expected = sign_payload(secret_key, payload)
+        return hmac.compare_digest(expected, signature)
+    except Exception:
+        return False
+
+
+# -----------------------------
+# App assembly
+# -----------------------------
+
+
+def ensure_seed_palettes(db: DB) -> None:
+    rows = db.all("SELECT palette_id FROM palettes LIMIT 1")
+    if rows:
+        return
+    now = iso_utc()
+    seeds = [
+        ("Neroli Night", ["#0b1020", "#19324a", "#2d5663", "#e3c6a6", "#f7efe6", "#c47a67", "#7a2f3b"], 211, True),
+        ("Garden Gym", ["#081a13", "#19422f", "#5bbd8c", "#f3f0d7", "#e8a96a", "#b2453d"], 123, True),
+        ("Lavender Pulse", ["#0c0c12", "#2a1a3a", "#4f2c6e", "#9d66cf", "#f3e9ff", "#f1c3dd", "#d85aa3", "#6e1d53"], 198, True),
+        ("Street Asha Neon", ["#070910", "#142233", "#1de9b6", "#e6f0ff", "#ff5ca8", "#ffb703"], 164, True),
+        ("Soft Tailor Bloom", ["#0f1115", "#273040", "#b5c7d3", "#f5f0ea", "#d1a7a2", "#8c3d3a"], 142, True),
+    ]
+    for name, colors, mood, active in seeds:
+        pid = soft_uuid(f"{name}:{now}")[:18]
+        db.exec(
+            "INSERT INTO palettes(palette_id,name,colors_json,mood,created_at,active) VALUES(?,?,?,?,?,?)",
+            (pid, name, json.dumps(colors, separators=(",", ":")), int(mood), now, 1 if active else 0),
+        )
+
+
+def mount_static(app: FastAPI, static_dir: str) -> None:
+    if os.path.isdir(static_dir):
+        app.mount("/streetofasha", StaticFiles(directory=static_dir, html=True), name="streetofasha")
+
+
+def create_app(cfg: AppConfig) -> FastAPI:
+    db = DB(cfg.db_path)
+    migrate(db)
+    ensure_seed_palettes(db)
+
+    limiter = RateLimiter(cfg.request_budget_per_minute)
+
+    app = FastAPI(title="YoFashion", version="1.0.0", docs_url="/docs", redoc_url=None)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cfg.allow_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    mount_static(app, cfg.static_dir)
+
+    @app.middleware("http")
+    async def _rate_limit(request: Request, call_next):
+        key = client_key(request)
+        if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi.json"):
+            return await call_next(request)
+        b = limiter.bucket_for(key)
+        cost = 1.0
+        if request.method.upper() in ("POST", "PUT", "DELETE"):
+            cost = 1.5
+        if not b.allow(cost=cost):
+            return JSONResponse({"error": "rate_limited", "key": key}, status_code=429)
+        resp = await call_next(request)
+        resp.headers["X-YoFashion-Client"] = key
+        return resp
+
+    def require_session(request: Request) -> sqlite3.Row:
+        sid = request.headers.get("x-yofashion-session") or request.query_params.get("session_id")
+        if not sid:
+            raise HTTPException(401, "Missing session (set x-yofashion-session header)")
+        row = db.one("SELECT * FROM sessions WHERE session_id=?", (sid,))
+        if row is None:
